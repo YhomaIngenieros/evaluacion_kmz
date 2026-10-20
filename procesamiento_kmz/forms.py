@@ -1,56 +1,99 @@
-from .models import Permiso, Area
+from io import BytesIO
+from zipfile import BadZipFile, ZipFile
+
 from django import forms
 from django.contrib.gis.geos import GEOSGeometry
 from django.core.exceptions import ValidationError
 from fastkml import kml
 
+from .models import Area, Permiso
+
+
 class RegionPermitidaForm(forms.Form):
     archivo = forms.FileField()
 
     def clean_archivo(self):
-        archivo = self.cleaned_data['archivo']
-        if not archivo.name.endswith(('.kmz', '.kml')):
+        archivo = self.cleaned_data["archivo"]
+        if not archivo.name.lower().endswith((".kmz", ".kml")):
             raise ValidationError("El archivo debe ser de tipo KMZ o KML.")
         return archivo
 
     def extraer_geometria(self):
-        archivo = self.cleaned_data['archivo']
+        archivo = self.cleaned_data["archivo"]
         contenido = archivo.read()
+        nombre = archivo.name.lower()
 
-        # Procesar KML
-        if archivo.name.endswith('.kml'):
-            kml_obj = kml.KML()
-            kml_obj.from_string(contenido.decode('utf-8'))
-            print("kml_obj")
-            for document in kml_obj.features():  # Iterar sobre los documentos
-                for feature in document.features():  # Iterar sobre las características
-                    if hasattr(feature, 'geometry'):
-                        return GEOSGeometry(feature.geometry.wkt)
+        if nombre.endswith(".kml"):
+            print("archivo kml")
+            geometria = self._geometria_desde_kml(contenido)
+            if geometria is not None:
+                return geometria
 
-        # Procesar KMZ
-        elif archivo.name.endswith('.kmz'):
-            import zipfile
-            with zipfile.ZipFile(archivo, 'r') as z:
-                for filename in z.namelist():
-                    if filename.endswith('.kml'):
-                        with z.open(filename) as kml_file:
-                            kml_obj = kml.KML()
-                            kml_obj.from_string(kml_file.read().decode('utf-8'))
-                            for document in kml_obj.features():
-                                for feature in document.features():
-                                    if hasattr(feature, 'geometry'):
-                                        return GEOSGeometry(feature.geometry.wkt)
+        elif nombre.endswith(".kmz"):
+            print("archivo kml")
 
-        raise ValidationError("No se pudo extraer la geometría del archivo.")
+            try:
+                with ZipFile(BytesIO(contenido)) as kmz:
+                    archivos_kml = [
+                        nombre_kml
+                        for nombre_kml in kmz.namelist()
+                        if nombre_kml.lower().endswith(".kml")
+                    ]
+
+                    for nombre_kml in archivos_kml:
+                        geometria = self._geometria_desde_kml(
+                            kmz.read(nombre_kml)
+                        )
+                        if geometria is not None:
+                            return geometria
+
+            except BadZipFile as exc:
+                raise ValidationError("El archivo KMZ no es un ZIP válido.") from exc
+
+        raise ValidationError(
+            "No se encontró ninguna geometría en el archivo."
+        )
+
+    def _geometria_desde_kml(self, contenido):
+        try:
+            texto_kml = contenido.decode("utf-8-sig")
+            kml_obj = kml.KML.from_string(texto_kml)
+        except Exception as exc:
+            raise ValidationError(
+                f"No se pudo procesar el archivo KML: {exc}"
+            ) from exc
+
+        for feature in self._recorrer_features(kml_obj.features):
+            geometria_kml = getattr(feature, "geometry", None)
+            if geometria_kml is None:
+                continue
+
+            try:
+                return GEOSGeometry(geometria_kml.wkt, srid=4326)
+            except Exception as exc:
+                raise ValidationError(
+                    f"No se pudo convertir la geometría: {exc}"
+                ) from exc
+
+        return None
+
+    @classmethod
+    def _recorrer_features(cls, features):
+        for feature in features:
+            yield feature
+
+            features_anidadas = getattr(feature, "features", None)
+            if features_anidadas:
+                yield from cls._recorrer_features(features_anidadas)
+
 
 class PermisoForm(forms.ModelForm):
     class Meta:
         model = Permiso
-        fields = ['nombre', 'descripcion']
+        fields = ["nombre", "descripcion"]
+
 
 class AreaForm(forms.ModelForm):
     class Meta:
         model = Area
-        fields = ['nombre', 'region_permitida', 'permiso']
-
-
+        fields = ["nombre", "region_permitida", "permiso"]

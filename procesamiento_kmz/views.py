@@ -1,6 +1,6 @@
 from django.shortcuts import render
 from django.http import JsonResponse
-from .models import Permiso
+from .models import Permiso, Area
 from .forms import RegionPermitidaForm
 
 def evaluar_region(request):
@@ -8,13 +8,15 @@ def evaluar_region(request):
         form = RegionPermitidaForm(request.POST, request.FILES)
         if form.is_valid():
             try:
+                print("form.extraer_geometria()")
                 geometria = form.extraer_geometria()
-                permisos = Permiso.objects.filter(region_permitida__contains=geometria)
-                if permisos.exists():
+                print("Compare Area's")
+                areas = Area.objects.filter(region_permitida__contains=geometria).select_related('permiso')
+                if areas.exists():
                     return JsonResponse({
                         'valido': True,
                         'mensaje': 'La región proporcionada es válida.',
-                        'permisos': [permiso.nombre for permiso in permisos]
+                        'permisos': list(areas.values_list('permiso__nombre', flat=True).distinct()),
                     })
                 else:
                     return JsonResponse({
