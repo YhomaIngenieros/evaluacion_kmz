@@ -5,6 +5,7 @@ class Permiso(models.Model):
     descripcion = models.TextField(blank=True, null=True)
     creado_en = models.DateTimeField(auto_now_add=True)
     actualizado_en = models.DateTimeField(auto_now=True)
+    estado = models.BooleanField(default=True)
 
     def __str__(self):
         return self.nombre
@@ -15,6 +16,7 @@ class Area(models.Model):
     region_permitida = models.PolygonField()
     creado_en = models.DateTimeField(auto_now_add=True)
     actualizado_en = models.DateTimeField(auto_now=True)
+    estado = models.BooleanField(default=True)
 
     def __str__(self):
         return self.nombre
